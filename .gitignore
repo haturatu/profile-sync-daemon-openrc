@@ -1,0 +1,13 @@
+*~
+*.swp
+*.swo
+*.tmp
+*.bak
+*.orig
+
+.DS_Store
+
+/tmp/
+/pkgroot/
+/dist/
+/build/

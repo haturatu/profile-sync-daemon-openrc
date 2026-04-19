@@ -1,0 +1,130 @@
+#!/sbin/openrc-run
+
+name="profile-sync-daemon"
+description="Run psd in an OpenRC user session and keep profiles synced to disk"
+description_start="Run psd resync, then keep syncing profiles back to disk on a fixed interval"
+description_stop="Flush tmpfs-backed profiles back to disk and restore them from backup"
+description_sync_now="Run psd sync immediately"
+extra_started_commands="sync_now"
+
+supervisor="supervise-daemon"
+respawn_delay=5
+respawn_max=0
+respawn_period=60
+
+: "${PSD_BIN:=/bin/psd}"
+: "${PSD_SYNC_INTERVAL:=300}"
+
+depend() {
+    after modules
+}
+
+setup_env() {
+    user_name="${USER:-$(id -un)}"
+    home_dir="$(getent passwd "${user_name}" | cut -d: -f6)"
+
+    export HOME="${HOME:-${home_dir}}"
+    export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-${HOME}/.config}"
+
+    if [ -n "${XDG_RUNTIME_DIR}" ]; then
+        PSD_RUNTIME_DIR="${XDG_RUNTIME_DIR}"
+    else
+        PSD_RUNTIME_DIR="${TMPDIR:-/tmp}/runtime-${user_name}"
+        export XDG_RUNTIME_DIR="${PSD_RUNTIME_DIR}"
+    fi
+
+    pidfile="${PSD_RUNTIME_DIR}/psd-openrc.pid"
+    output_log="${PSD_RUNTIME_DIR}/psd-openrc.log"
+}
+
+run_psd() {
+    env \
+        HOME="${HOME}" \
+        XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
+        XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" \
+        "${PSD_BIN}" "$@"
+}
+
+start_pre() {
+    setup_env
+
+    if [ ! -x "${PSD_BIN}" ]; then
+        eerror "psd not found: ${PSD_BIN}"
+        return 1
+    fi
+
+    if [ -z "${HOME}" ] || [ ! -d "${HOME}" ]; then
+        eerror "Home directory does not exist: ${HOME}"
+        return 1
+    fi
+
+    if ! checkpath -d -m 0700 "${PSD_RUNTIME_DIR}"; then
+        eerror "Failed to prepare runtime directory: ${PSD_RUNTIME_DIR}"
+        return 1
+    fi
+
+    case "${PSD_SYNC_INTERVAL}" in
+        ''|*[!0-9]*)
+            eerror "PSD_SYNC_INTERVAL must be a positive integer in seconds"
+            return 1
+            ;;
+        0)
+            eerror "PSD_SYNC_INTERVAL must be greater than zero"
+            return 1
+            ;;
+    esac
+}
+
+start() {
+    setup_env
+
+    ebegin "Resyncing psd profile to tmpfs"
+    run_psd resync
+    local rc=$?
+    eend ${rc} || return ${rc}
+
+    ebegin "Starting periodic psd sync loop"
+    ${supervisor} "${RC_SVCNAME}" --start \
+        --pidfile "${pidfile}" \
+        --respawn-delay "${respawn_delay}" \
+        --respawn-max "${respawn_max}" \
+        --respawn-period "${respawn_period}" \
+        --stdout "${output_log}" \
+        --stderr "${output_log}" \
+        --env "HOME=${HOME}" \
+        --env "XDG_CONFIG_HOME=${XDG_CONFIG_HOME}" \
+        --env "XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR}" \
+        --env "PSD_BIN=${PSD_BIN}" \
+        --env "PSD_SYNC_INTERVAL=${PSD_SYNC_INTERVAL}" \
+        -- /bin/bash -c 'trap "exit 0" INT TERM; while :; do sleep "${PSD_SYNC_INTERVAL}" & wait $! || exit 0; "${PSD_BIN}" sync || exit $?; done'
+    rc=$?
+    eend ${rc}
+    return ${rc}
+}
+
+stop() {
+    setup_env
+
+    ebegin "Stopping periodic psd sync loop"
+    ${supervisor} "${RC_SVCNAME}" --stop --pidfile "${pidfile}"
+    local stop_rc=$?
+    eend ${stop_rc}
+
+    ebegin "Syncing psd profile back to disk"
+    run_psd sync && run_psd unsync
+    local rc=$?
+    eend ${rc}
+
+    [ ${stop_rc} -eq 0 ] || return ${stop_rc}
+    return ${rc}
+}
+
+sync_now() {
+    setup_env
+
+    ebegin "Syncing psd profile back to disk"
+    run_psd sync
+    local rc=$?
+    eend ${rc}
+    return ${rc}
+}
