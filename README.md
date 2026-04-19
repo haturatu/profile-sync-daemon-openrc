@@ -11,9 +11,11 @@ stop    : psd sync && psd unsync
 ```
 
 ## install
-
-Standard install:
-
+yay:
+```sh
+yay -S profile-sync-daemon-openrc-git
+```
+GNU make:
 ```sh
 sudo make install
 ```
