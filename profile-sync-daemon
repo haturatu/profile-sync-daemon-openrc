@@ -528,16 +528,22 @@ do_sync() {
 enforce() {
   local browser
   for browser in "${BROWSERS[@]}"; do
-    local CRASHArr=()
-    while IFS= read -d '' -r backup; do
-      CRASHArr=("${CRASHArr[@]}" "$backup")
-    done < <(find "${DIR%/*}" -maxdepth 1 -type d -name "${DIR##*/}-backup-crashrecovery-*" -print0 | sort -r -z)
+    load_env_for "$browser"
+    local item
+    for item in "${DIRArr[@]}"; do
+      DIR="$item"
 
-    if [[ ${#CRASHArr[@]} -gt $BACKUP_LIMIT ]]; then
-      for remove in "${CRASHArr[@]:$BACKUP_LIMIT}"; do
-        rm -rf "$remove"
-      done
-    fi
+      local CRASHArr=()
+      while IFS= read -d '' -r backup; do
+        CRASHArr=("${CRASHArr[@]}" "$backup")
+      done < <(find "${DIR%/*}" -maxdepth 1 -type d -name "${DIR##*/}-backup-crashrecovery-*" -print0 | sort -r -z)
+
+      if [[ ${#CRASHArr[@]} -gt $BACKUP_LIMIT ]]; then
+        for remove in "${CRASHArr[@]:$BACKUP_LIMIT}"; do
+          rm -rf "$remove"
+        done
+      fi
+    done
   done
 }
 
@@ -763,6 +769,7 @@ case "$1" in
   sync|resync)
     if [[ -f $PID_FILE ]]; then
       do_sync
+      enforce
     else
       dep_check
       config_check

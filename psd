@@ -78,9 +78,14 @@ start_pre() {
 start() {
     setup_env
 
+    ebegin "Preparing psd runtime"
+    run_psd startup
+    local rc=$?
+    eend ${rc} || return ${rc}
+
     ebegin "Resyncing psd profile to tmpfs"
     run_psd resync
-    local rc=$?
+    rc=$?
     eend ${rc} || return ${rc}
 
     ebegin "Starting periodic psd sync loop"
